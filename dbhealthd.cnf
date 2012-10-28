@@ -1,0 +1,34 @@
+
+# this section is in mysql defaults file format
+[mysql-connect]
+port=3306
+user=someuser
+password=somepass
+
+# list of servers to first query
+# other servers in the cluster will be auto-discovered
+# include at least one server from each cluster
+#
+# use trailing numbers to make the key unique
+# the key string without the numbers is used as the purpose indicator
+#
+# only one server in each cluster needs to be specified,
+# unless you want to customize the purpose or the auto-discovery
+# won't be able to connect to the IP as seen from the server
+[seedservers]
+main=db1
+backup=db2
+cluster1=db3
+cluster2=db4
+
+# list of servers to ignore and not include in the report
+# 
+# this was added because, with the auto-discovery, the source IP
+# the slave is connecting from may not be connectable from where
+# this service runs.  You can add those server to the [seedservers]
+# list with different/usable IPs.  If the names or IPs below
+# are auto-discovered, they will be ignored
+[ignore]
+ignore1=db1-vpn
+ignore2=db3-vpn
+
