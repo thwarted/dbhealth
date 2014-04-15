@@ -403,7 +403,8 @@ def producer(slot, dbinfo):
         return node_active
 
     def replicating_slaves(db, last_query):
-        last_query[0] = "select substring_index(host, ':', 1) as slave from information_schema.processlist where command in ('Binlog Dump', 'Binlog Dump GTID')";
+        last_query[0] = "select trim(trailing concat(':',substring_index(host, ':', -1)) from host) as slave " + \
+                        "  from information_schema.processlist where command in ('Binlog Dump', 'Binlog Dump GTID')"
         db.query(last_query[0])
         rs = db.store_result()
         slaves = []
