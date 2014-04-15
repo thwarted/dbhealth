@@ -402,6 +402,15 @@ def producer(slot, dbinfo):
             node_active = '0'
         return node_active
 
+    def replicating_slaves_new(db, last_query):
+        last_query[0] = "show slave hosts"
+        db.query(last_query[0])
+        rs = db.store_result()
+        slaves = []
+        for row in rs.fetch_row(0):
+            slaves.append(row[1])
+        return tuple(slaves)
+
     def replicating_slaves(db, last_query):
         last_query[0] = "select trim(trailing concat(':',substring_index(host, ':', -1)) from host) as slave " + \
                         "  from information_schema.processlist where command in ('Binlog Dump', 'Binlog Dump GTID')"
