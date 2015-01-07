@@ -40,16 +40,32 @@ storage_type = 'simple'
 running = True
 
 
-_empty_slaves = str(socket.inet_aton('0.0.0.0')) * maxslaves
+def inet_ANYton(addr):
+    try:
+        return socket.inet_aton(addr)
+    except socket.error, e:
+        return socket.inet_pton(socket.AF_INET6, addr)
+
+def inet_ntoANY(s):
+    try:
+        return socket.inet_ntop(socket.AF_INET6, s)
+    except (Exception, socket.error), e:
+        return socket.inet_ntoa(s)
+
+def get_node_ip(name):
+    g = socket.getaddrinfo(name, 0)
+    return g[0][4][0]
+
+_empty_slaves = str(inet_ANYton('::')) * maxslaves
 
 if storage_type == 'pickle':
     sample_struct = {'node':"x" * 30, # svname (service name) in haproxy
                  'hostname':"x" * 30, # what the machine thinks its hostname is
                    'pxname':"x" * 30, # haproxy's proxy name
                   'version':"x" * 50,
-                       'ip':socket.inet_aton('255.255.255.255'),
-                   'master':socket.inet_aton('255.255.255.255'),
-                   'slaves':str(socket.inet_aton('255.255.255.255')) * maxslaves,
+                       'ip':inet_ANYton('::'),
+                   'master':inet_ANYton('::'),
+                   'slaves':str(inet_ANYton('::')) * maxslaves,
                      'port':(2 ** 16),
                      'time':int(time.time()),
                       'act':True,
@@ -119,17 +135,17 @@ def cleanup_state_dict(**a):
         raise KeyError('missing node key')
 
     if a.has_key('ip'):
-        a['ip'] = socket.inet_aton(a['ip'])
+        a['ip'] = inet_ANYton(a['ip'])
     else:
-        a['ip'] = socket.inet_aton('0.0.0.0')
+        a['ip'] = inet_ANYton('::')
 
     if not a.has_key('hostname'):
         a['hostname'] = ''
 
     if not a.has_key('master'):
-        a['master'] = socket.inet_aton('0.0.0.0')
-    elif len(a['master']) != 4:
-        a['master'] = socket.inet_aton(a['master'])
+        a['master'] = inet_ANYton('::')
+    elif len(a['master']) not in (4, 16):
+        a['master'] = inet_ANYton(a['master'])
 
     if not a.has_key('port'):
         a['port'] = 3306
@@ -185,9 +201,9 @@ def cleanup_state_dict(**a):
     if not a.has_key('slaves'):
         a['slaves'] = _empty_slaves
     else:
-        x = ''.join(socket.inet_aton(x) for x in a['slaves'])
+        x = ''.join(inet_ANYton(x) for x in a['slaves'])
         x += _empty_slaves
-        a['slaves'] = x[:maxslaves*4]
+        a['slaves'] = x[:maxslaves*16]
 
     a['pid'] = os.getpid()
 
@@ -232,13 +248,13 @@ def retrieve(slot):
     if 'time' in a:
         a['dataage'] = int(time.time()) - a['time']
     a['slot'] = slot
-    if 'master' in a and len(a['master']) == 4:
-        a['master'] = socket.inet_ntoa(a['master'])
+    if 'master' in a and len(a['master']) in (4, 16):
+        a['master'] = inet_ntoANY(a['master'])
     else:
         a['master'] = '-'
 
-    a['ip'] = socket.inet_ntoa(a['ip'])
-    a['slaves'] = tuple(socket.inet_ntoa(a['slaves'][x:x+4]) for x in range(0, len(a['slaves']), 4) if a['slaves'][x:x+4] != '\x00\x00\x00\x00')
+    a['ip'] = inet_ntoANY(a['ip'])
+    a['slaves'] = tuple(inet_ntoANY(a['slaves'][x:x+4]) for x in range(0, len(a['slaves']), 4) if a['slaves'][x:x+4] != '\x00\x00\x00\x00')
     a['slavecount'] = len(a['slaves'])
 
     return a
@@ -313,7 +329,8 @@ def spawn_new_producer(dbinfo, wfile=None):
     node = dbinfo['name']
 
     try:
-        dbinfo['ip'] = socket.gethostbyname(node)
+        #dbinfo['ip'] = socket.gethostbyname(node)
+        dbinfo['ip'] = get_node_ip(node)
     except socket.gaierror:
         # TODO issue a warning here, no DNS entry
         # TODO or remove the entry all together
@@ -465,8 +482,10 @@ def producer(slot, dbinfo):
             if not db:
                 try:
                     #sys.stderr.write("attempting to connect to %s\n" % (name,))
+                    print "connecting to "+dbinfo['ip']
                     db = _mysql.connect(read_default_file=config_file, read_default_group='mysql-connect', host=dbinfo['ip'])
-                except:
+                except Exception, e:
+                    print repr(e)
                     db = None
                 if not db:
                     sleeptime = sleeptime * 2
@@ -726,7 +745,8 @@ class MyHandler(BaseHTTPRequestHandler):
     def GET_addserver(self, path):
         node = path[0]
         try:
-            ip = socket.gethostbyname(node)
+            #ip = socket.gethostbyname(node)
+            ip = get_node_ip(node)
             if not dbstate_servers_has(ip):
                 dbstate.servers.append({'name':ip, 'pxname': '-'})
         except socket.gaierror:
@@ -793,7 +813,8 @@ def normalize_dbstate():
     # a name may have been given in the server seed list, so normalize
     # those names to IP addresses
     for i in xrange(len(dbstate.servers)):
-        dbstate.servers[i]['name'] = socket.gethostbyname(dbstate.servers[i]['name'])
+        #dbstate.servers[i]['name'] = socket.gethostbyname(dbstate.servers[i]['name'])
+        dbstate.servers[i]['name'] = get_node_ip(dbstate.servers[i]['name'])
 
 dbstate_stat_mtime = 0
 
@@ -815,7 +836,8 @@ def reload_dbstate_config():
                 pxname = re.split(r'\d+.*$', pxname)[0]
                 dbstate.servers.append({'name':servername, 'pxname': pxname})
             for x, servername in c.items('ignore'):
-                ip = socket.gethostbyname(servername)
+                #ip = socket.gethostbyname(servername)
+                ip = get_node_ip(servername)
                 name = ip2shortname(ip)
                 dbstate.ignore.extend([ip, name])
             sys.stderr.write("reloaded %s\n" % (config_file,))
@@ -943,7 +965,8 @@ def find_new_servers():
 
         # do we already know about this node's master?
         try:
-            ip = socket.gethostbyname(a['master'])
+            #ip = socket.gethostbyname(a['master'])
+            ip = get_node_ip(a['master'])
             if ip not in dbstate.ignore and not dbstate_servers_has(ip):
                 dbstate.servers.append({'name':ip, 'pxname': '-'})
         except socket.gaierror:
@@ -952,7 +975,8 @@ def find_new_servers():
         # do we already know about all the slaves of this node?
         for ip in a['slaves']:
             try:
-                ip = socket.gethostbyname(ip)
+                #ip = socket.gethostbyname(ip)
+                ip = get_node_ip(ip)
                 if ip not in dbstate.ignore and not dbstate_servers_has(ip):
                     dbstate.servers.append({'name':ip, 'pxname': '-'})
             except socket.gaierror:
